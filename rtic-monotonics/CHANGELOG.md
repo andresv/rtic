@@ -7,6 +7,8 @@ For each category, *Added*, *Changed*, *Fixed* add new entries at the top!
 
 ## Unreleased
 
+- Added EFR32MG22 support using the inbuilt RTCC peripheral
+
 ### Changed
 
 - STM32's monotonics now derive the timer counter size from the pac register definition
