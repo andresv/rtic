@@ -40,8 +40,13 @@ pub mod prelude {
     pub use crate::fugit::{self, ExtU32, ExtU32Ceil};
 }
 
-use crate::{rtic_time::timer_queue::TimerQueue, TimerQueueBackend};
-use efr32mg22_pac::*;
+use crate::{rtic_time::timer_queue::TimerQueue, silabs::NVIC_PRIO_BITS, TimerQueueBackend};
+use cortex_m::peripheral::NVIC;
+use silabs_metapac::{
+    cmu_v1::Cmu,
+    rtcc_v1::{vals::Cc0CtrlMode, Rtcc},
+    Interrupt, RTCC,
+};
 
 /// Timer implementing [`TimerQueueBackend`].
 pub struct TimerBackend;
@@ -52,25 +57,25 @@ impl TimerBackend {
     /// **Do not use this function directly.**
     ///
     /// Use the prelude macros instead.
-    pub fn _start(timer: RtccNs, cmu: &CmuNs) {
+    pub fn _start(timer: Rtcc, cmu: &Cmu) {
         // enable required bus clock
-        cmu.clken0().modify(|_, w| w.rtcc().set_bit());
+        cmu.clken0().modify(|w| w.set_rtcc(true));
 
         // enable rtcc and interrupts
-        timer.en().write(|w| w.en().set_bit());
-        timer.cmd().write(|w| w.start().set_bit());
-        timer.ien().write(|w| w.cc0().set_bit());
+        timer.en().write(|w| w.set_en(true));
+        timer.cmd().write(|w| w.set_start(true));
+        timer.ien().write(|w| w.set_cc0(true));
 
         TIMER_QUEUE.initialize(Self {});
 
         unsafe {
-            crate::set_monotonic_prio(efr32mg22_pac::NVIC_PRIO_BITS, Interrupt::RTCC);
+            crate::set_monotonic_prio(NVIC_PRIO_BITS, Interrupt::RTCC);
             NVIC::unmask(Interrupt::RTCC);
         }
     }
 
-    fn rtcc() -> &'static rtcc_ns::RegisterBlock {
-        unsafe { &*RtccNs::ptr() }
+    fn rtcc() -> &'static Rtcc {
+        &RTCC
     }
 }
 
@@ -82,26 +87,25 @@ impl TimerQueueBackend for TimerBackend {
     fn now() -> Self::Ticks {
         let timer = Self::rtcc();
 
-        timer.cnt().read().cnt().bits()
+        timer.cnt().read().cnt()
     }
 
     fn set_compare(instant: Self::Ticks) {
-        Self::rtcc().cc0_ctrl().write(|w| w.mode().outputcompare());
-
         Self::rtcc()
-            .cc0_ocvalue()
-            .write(|w| unsafe { w.oc().bits(instant) });
+            .cc0_ctrl()
+            .write(|w| w.set_mode(Cc0CtrlMode::Outputcompare));
+
+        Self::rtcc().cc0_ocvalue().write(|w| w.set_oc(instant));
     }
 
     fn clear_compare_flag() {
-        // unfortunately the RTCC_IF_CLR flag is not part of the SVD/PAC
-        let cc0_clear_reg = (RtccNs::ptr() as u32 + 0x2014) as *mut u32;
-        unsafe {
-            cc0_clear_reg.write_volatile(0b10_000 /* CC0 clear is at bit 4 */)
-        };
+        // clear interrupt flag
+        Self::rtcc().if_clr().write(|w| w.set_cc0(true));
 
         // disable compare
-        Self::rtcc().cc0_ctrl().write(|w| w.mode().off());
+        Self::rtcc()
+            .cc0_ctrl()
+            .write(|w| w.set_mode(Cc0CtrlMode::Off));
     }
 
     fn pend_interrupt() {
@@ -132,7 +136,7 @@ macro_rules! silabs_rtc_monotonic {
             /// Starts the `Monotonic`.
             ///
             /// This method must be called only once.
-            pub fn start(timer: efr32mg22_pac::RtccNs, cmu: &efr32mg22_pac::CmuNs) {
+            pub fn start(timer: $crate::silabs::rtcc::Rtcc, cmu: &$crate::silabs::rtcc::Cmu) {
                 #[no_mangle]
                 #[allow(non_snake_case)]
                 unsafe extern "C" fn RTCC() {
@@ -156,3 +160,4 @@ macro_rules! silabs_rtc_monotonic {
         rtic_time::impl_embedded_hal_async_delay_fugit!($name);
     };
 }
+silabs_rtc_monotonic!(Mono);

@@ -7,7 +7,7 @@ For each category, *Added*, *Changed*, *Fixed* add new entries at the top!
 
 ## Unreleased
 
-- Added EFR32MG22 support using the inbuilt RTCC peripheral
+- Added Silabs (EFR32, EFM32) support using the inbuilt RTCC / LETIMER peripherals
 
 ### Changed
 

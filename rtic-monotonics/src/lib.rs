@@ -100,7 +100,7 @@ pub mod nrf;
 #[cfg(stm32)]
 pub mod stm32;
 
-#[cfg(feature = "efr32mg22")]
+#[cfg(feature = "silabs")]
 pub mod silabs;
 
 #[allow(dead_code)]
@@ -109,7 +109,7 @@ pub(crate) const fn cortex_logical2hw(logical: u8, nvic_prio_bits: u8) -> u8 {
 }
 
 #[cfg(any(
-    feature = "efr32mg22",
+    feature = "silabs",
     feature = "rp235x",
     feature = "rp2040",
     feature = "nrf52805",

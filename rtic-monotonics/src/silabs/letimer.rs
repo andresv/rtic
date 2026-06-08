@@ -41,8 +41,33 @@ pub mod prelude {
     pub use crate::fugit::{self, ExtU64, ExtU64Ceil};
 }
 
-use crate::{rtic_time::timer_queue::TimerQueue, TimerQueueBackend};
-use efr32mg22_pac::*;
+use crate::{
+    rtic_time::timer_queue::TimerQueue, set_monotonic_prio, silabs::NVIC_PRIO_BITS,
+    TimerQueueBackend,
+};
+use cortex_m::peripheral::NVIC;
+use silabs_metapac::{Interrupt, LETIMER0};
+
+#[cfg(feature = "silabs-efr32mg22")]
+use silabs_metapac::{
+    cmu_v1::Cmu,
+    letimer_v0::{vals::Cntpresc, Letimer},
+};
+#[cfg(feature = "silabs-efr32mg24")]
+use silabs_metapac::{
+    cmu_v3::Cmu,
+    letimer_v1::{vals::Cntpresc, Letimer},
+};
+#[cfg(feature = "silabs-efr32fg25")]
+use silabs_metapac::{
+    cmu_v4::Cmu,
+    letimer_v1::{vals::Cntpresc, Letimer},
+};
+#[cfg(feature = "silabs-efr32mg26")]
+use silabs_metapac::{
+    cmu_v7::Cmu,
+    letimer_v1::{vals::Cntpresc, Letimer},
+};
 
 /// Timer implementing [`TimerQueueBackend`].
 pub struct TimerBackend;
@@ -55,39 +80,38 @@ impl TimerBackend {
     /// **Do not use this function directly.**
     ///
     /// Use the prelude macros instead.
-    pub fn _start(timer: Letimer0Ns, cmu: &CmuNs, tick_rate_hz: u32) {
+    pub fn _start(timer: Letimer, cmu: &Cmu, tick_rate_hz: u32) {
         // enable required bus clock
-        cmu.clken0().modify(|_, w| w.letimer0().set_bit());
+        cmu.clken0().modify(|w| w.set_letimer0(true));
 
         // configure prescaling
         timer.ctrl().write(|w| match tick_rate_hz {
-            32_768 => w.cntpresc().div1(),
-            16_384 => w.cntpresc().div2(),
-            8_192 => w.cntpresc().div4(),
-            4_096 => w.cntpresc().div8(),
-            2_048 => w.cntpresc().div16(),
-            1_024 => w.cntpresc().div32(),
-            512 => w.cntpresc().div64(),
-            256 => w.cntpresc().div128(),
+            32_768 => w.set_cntpresc(Cntpresc::Div1),
+            16_384 => w.set_cntpresc(Cntpresc::Div2),
+            8_192 => w.set_cntpresc(Cntpresc::Div4),
+            4_096 => w.set_cntpresc(Cntpresc::Div8),
+            2_048 => w.set_cntpresc(Cntpresc::Div16),
+            1_024 => w.set_cntpresc(Cntpresc::Div32),
+            512 => w.set_cntpresc(Cntpresc::Div64),
+            256 => w.set_cntpresc(Cntpresc::Div128),
             _ => ::core::panic!("Timer cannot run at desired tick rate!"),
         });
 
         // enable timer and interrupts
-        timer.en().write(|w| w.en().set_bit());
-        timer.cmd().write(|w| w.start().set_bit());
-        timer.ien().modify(|_, w| w.comp0().set_bit());
+        timer.en().write(|w| w.set_en(true));
+        timer.cmd().write(|w| w.set_start(true));
+        timer.ien().modify(|w| w.set_comp0(true));
 
         TIMER_QUEUE.initialize(Self {});
 
         unsafe {
-            // TODO
-            // set_monotonic_prio(efr32mg22_pac::NVIC_PRIO_BITS, Interrupt::LETIMER0);
+            set_monotonic_prio(NVIC_PRIO_BITS, Interrupt::LETIMER0);
             NVIC::unmask(Interrupt::LETIMER0);
         }
     }
 
-    fn letimer() -> &'static letimer0_ns::RegisterBlock {
-        unsafe { &*Letimer0Ns::ptr() }
+    fn letimer() -> &'static Letimer {
+        &LETIMER0
     }
 }
 
@@ -100,7 +124,7 @@ impl TimerQueueBackend for TimerBackend {
         let timer = Self::letimer();
         // The LEtimer is counting downwards, from U24_MAX to 0
 
-        let now = timer.cnt().read().cnt().bits();
+        let now = timer.cnt().read().cnt();
         if now == 0 {
             0 // timer not started yet
         } else {
@@ -111,20 +135,15 @@ impl TimerQueueBackend for TimerBackend {
     fn set_compare(instant: Self::Ticks) {
         Self::letimer()
             .comp0()
-            .write(|w| unsafe { w.comp0().bits(U24_MAX - instant) });
+            .write(|w| w.set_comp0(U24_MAX - instant));
     }
 
     fn clear_compare_flag() {
-        // unfortunately the LETIMER0_IF_CLR flag is not part of the SVD/PAC
-        let letimer0_if_clear = (Letimer0Ns::ptr() as u32 + 0x2034) as *mut u32;
-        unsafe {
-            letimer0_if_clear.write_volatile(0b1 /* CC0 clear is at bit 0 */)
-        };
+        // clear interrupt flag
+        Self::letimer().if_clr().write(|w| w.set_comp0(true));
 
         // disable compare
-        Self::letimer()
-            .comp0()
-            .write(|w| unsafe { w.comp0().bits(0) });
+        Self::letimer().comp0().write(|w| w.set_comp0(0));
     }
 
     fn pend_interrupt() {
@@ -158,7 +177,10 @@ macro_rules! silabs_letimer_monotonic {
             /// Starts the `Monotonic`.
             ///
             /// This method must be called only once.
-            pub fn start(timer: efr32mg22_pac::Letimer0Ns, cmu: &efr32mg22_pac::CmuNs) {
+            pub fn start(
+                timer: $crate::silabs::letimer::Letimer,
+                cmu: &$crate::silabs::letimer::Cmu,
+            ) {
                 #[no_mangle]
                 #[allow(non_snake_case)]
                 unsafe extern "C" fn LETIMER0() {
@@ -188,3 +210,4 @@ macro_rules! silabs_letimer_monotonic {
         rtic_time::impl_embedded_hal_async_delay_fugit!($name);
     };
 }
+silabs_letimer_monotonic!(Mono);
