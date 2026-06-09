@@ -7,7 +7,7 @@ For each category, *Added*, *Changed*, *Fixed* add new entries at the top!
 
 ## Unreleased
 
-- Added Silabs (EFR32, EFM32) support using the inbuilt RTCC / LETIMER peripherals
+- Added Silabs (EFR32, EFM32) support using the inbuilt RTCC / LETIMER / TIMER peripherals
 
 ### Changed
 
