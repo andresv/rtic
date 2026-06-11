@@ -114,11 +114,7 @@ impl TimerBackend {
         });
 
         timer.en().write(|w| w.set_en(true));
-
-        // Free-run over the full 24-bit range; COMP1 marks the half-period.
-        timer.top().write(|w| w.set_top(U24_MAX));
         timer.comp1().write(|w| w.set_comp1(HALF_PERIOD_CNT));
-
         timer.cmd().write(|w| w.set_start(true));
 
         // CNT reads 0 across the LF clock-domain sync after START.
